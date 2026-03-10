@@ -163,6 +163,55 @@ export default function TN3270Terminal() {
   };
 
   /**
+   * Send Text: immediately write text to the screen WITHOUT pressing Enter.
+   * - If Row + Col are provided: sends to specified position via /menu/command
+   * - If Row + Col are empty: sends to current cursor position via /send/string
+   * This mimics the Falcon client's typing behavior.
+   */
+  const handleSendText = async () => {
+    if (!sessionId || !inputText) return;
+    setLoading(true);
+
+    const row = parseInt(inputRow);
+    const col = parseInt(inputCol);
+    const text = inputText;
+
+    if (row && col) {
+      // Send to specific position (like fillField)
+      logOperation(`Send text at [Row:${row}, Col:${col}]: "${text}"`);
+      try {
+        const json = await apiCall('POST', '/menu/command', {
+          row: row,
+          column: col,
+          command: text,
+        });
+        logRaw('SendText response (raw)', json);
+        logFormatted('SendText response', json);
+        updateScreen(json.data);
+        logOperation(`Text sent to [Row:${row}, Col:${col}]`);
+      } catch (e) {
+        logOperation(`SendText error: ${e.message}`);
+      }
+    } else {
+      // No position: send to current cursor (like typing in Falcon)
+      logOperation(`Send text at cursor: "${text}"`);
+      try {
+        const json = await apiCall('POST', '/send/string', { text: text });
+        logRaw('SendString response (raw)', json);
+        logFormatted('SendString response', json);
+        updateScreen(json.data);
+        logOperation(`Text sent at cursor position`);
+      } catch (e) {
+        logOperation(`SendString error: ${e.message}`);
+      }
+    }
+
+    // Clear text input after sending
+    setInputText('');
+    setLoading(false);
+  };
+
+  /**
    * Enter: send all staged inputs to mainframe, then press Enter.
    * If no staged inputs, just sends Enter key.
    */
@@ -653,6 +702,14 @@ export default function TN3270Terminal() {
           >
             Stage Input
           </button>
+          <button
+            style={btnStyle('primary')}
+            onClick={handleSendText}
+            disabled={loading || !sessionId || !inputText}
+          >
+            Send Text
+          </button>
+          <span style={{ color: '#333', fontSize: '16px', alignSelf: 'center' }}>|</span>
           <button
             style={btnStyle('key')}
             onClick={() => handleKeyAction('Reset', '/key/reset')}
