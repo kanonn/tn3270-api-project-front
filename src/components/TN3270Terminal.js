@@ -13,10 +13,10 @@ const emptyScreen = () => Array.from({ length: ROWS }, () => ' '.repeat(COLS));
  * 
  * Features:
  * - Screen display with line numbers (24x80 character grid)
- * - Cursor position input with live preview overlay
- * - Terminal key buttons (Send Text, Reset, F2, F3, Enter, Tab)
+ * - Staged input system: queue multiple row/col/text inputs before sending
+ * - Live yellow preview for current input, red for staged inputs
+ * - Enter sends all staged inputs then presses Enter
  * - Operation logging with toggle switches
- * - JSON response logging (raw and formatted)
  */
 export default function TN3270Terminal() {
   // --- State ---
@@ -25,6 +25,7 @@ export default function TN3270Terminal() {
   const [inputRow, setInputRow] = useState('');
   const [inputCol, setInputCol] = useState('');
   const [inputText, setInputText] = useState('');
+  const [stagedInputs, setStagedInputs] = useState([]); // [{row, col, text}, ...]
   const [logs, setLogs] = useState([]);
   const [logOperations, setLogOperations] = useState(true);
   const [logRawJson, setLogRawJson] = useState(false);
@@ -78,13 +79,47 @@ export default function TN3270Terminal() {
       const padded = data.screenLines.map(line =>
         (line || '').padEnd(COLS).substring(0, COLS)
       );
-      // Pad to 24 rows if fewer lines returned
       while (padded.length < ROWS) padded.push(' '.repeat(COLS));
       setScreenLines(padded);
     }
   };
 
-  // --- API actions ---
+  // ============================================
+  //  STAGED INPUT SYSTEM
+  // ============================================
+
+  /** Stage current input (save row/col/text, show red on screen) */
+  const handleStageInput = () => {
+    const row = parseInt(inputRow);
+    const col = parseInt(inputCol);
+    const text = inputText;
+    if (!row || !col || !text) return;
+
+    const newEntry = { row, col, text };
+    setStagedInputs(prev => [...prev, newEntry]);
+    logOperation(`Staged input #${stagedInputs.length + 1}: [Row:${row}, Col:${col}] "${text}"`);
+
+    // Clear input fields for next entry
+    setInputRow('');
+    setInputCol('');
+    setInputText('');
+  };
+
+  /** Remove a specific staged input by index */
+  const removeStagedInput = (index) => {
+    setStagedInputs(prev => prev.filter((_, i) => i !== index));
+    logOperation(`Removed staged input #${index + 1}`);
+  };
+
+  /** Clear all staged inputs */
+  const clearStagedInputs = () => {
+    setStagedInputs([]);
+    logOperation('Cleared all staged inputs');
+  };
+
+  // ============================================
+  //  API ACTIONS
+  // ============================================
 
   const handleConnect = async () => {
     setLoading(true);
@@ -127,26 +162,51 @@ export default function TN3270Terminal() {
     setLoading(false);
   };
 
-  const handleSendText = async () => {
-    const row = parseInt(inputRow);
-    const col = parseInt(inputCol);
-    const text = inputText;
-    if (!sessionId || !row || !col || !text) return;
-
+  /**
+   * Enter: send all staged inputs to mainframe, then press Enter.
+   * If no staged inputs, just sends Enter key.
+   */
+  const handleEnter = async () => {
+    if (!sessionId) return;
     setLoading(true);
-    logOperation(`Send text at [Row:${row}, Col:${col}]: "${text}"`);
+
+    // If staged inputs exist, send them all first
+    if (stagedInputs.length > 0) {
+      logOperation(`Sending ${stagedInputs.length} staged input(s) then Enter...`);
+
+      for (let i = 0; i < stagedInputs.length; i++) {
+        const { row, col, text } = stagedInputs[i];
+        logOperation(`  Sending #${i + 1}: [Row:${row}, Col:${col}] "${text}"`);
+        try {
+          const json = await apiCall('POST', '/menu/command', {
+            row: row,
+            column: col,
+            command: text,
+          });
+          logRaw(`Input #${i + 1} response (raw)`, json);
+          if (!json.success) {
+            logOperation(`  Input #${i + 1} failed: ${json.message}`);
+          }
+        } catch (e) {
+          logOperation(`  Input #${i + 1} error: ${e.message}`);
+        }
+      }
+
+      // Clear staged inputs after sending
+      setStagedInputs([]);
+    } else {
+      logOperation('Sending Enter key (no staged inputs)');
+    }
+
+    // Now press Enter
     try {
-      const json = await apiCall('POST', '/menu/command', {
-        row: row,
-        column: col,
-        command: text,
-      });
-      logRaw('SendText response (raw)', json);
-      logFormatted('SendText response', json);
+      const json = await apiCall('POST', '/key/enter');
+      logRaw('Enter response (raw)', json);
+      logFormatted('Enter response', json);
       updateScreen(json.data);
-      logOperation(`Text sent successfully at [Row:${row}, Col:${col}]`);
+      logOperation('Enter sent successfully');
     } catch (e) {
-      logOperation(`SendText error: ${e.message}`);
+      logOperation(`Enter error: ${e.message}`);
     }
     setLoading(false);
   };
@@ -185,42 +245,47 @@ export default function TN3270Terminal() {
 
   const clearLogs = () => setLogs([]);
 
-  // --- Compute display screen with input overlay ---
-  const getDisplayScreen = () => {
-    const row = parseInt(inputRow);
-    const col = parseInt(inputCol);
-    const text = inputText;
+  // ============================================
+  //  SCREEN RENDERING WITH OVERLAYS
+  // ============================================
 
-    // Convert each line to character array
-    const display = screenLines.map(line => [...line]);
+  /**
+   * Build a character map with type for each cell:
+   * 'staged'  = red   (committed staged input)
+   * 'preview' = yellow (current live preview, not yet staged)
+   * null      = normal green
+   */
+  const getDisplayData = () => {
+    const chars = screenLines.map(line => [...line]);
+    const types = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
 
-    // Overlay input text at specified position
-    if (row >= 1 && row <= ROWS && col >= 1 && col <= COLS && text) {
+    // Layer 1: staged inputs (red)
+    for (const { row, col, text } of stagedInputs) {
       const r = row - 1;
       const c = col - 1;
       for (let i = 0; i < text.length && c + i < COLS; i++) {
-        display[r][c + i] = text[i];
+        chars[r][c + i] = text[i];
+        types[r][c + i] = 'staged';
       }
     }
 
-    return display;
+    // Layer 2: current preview (yellow)
+    const pRow = parseInt(inputRow);
+    const pCol = parseInt(inputCol);
+    const pText = inputText;
+    if (pRow >= 1 && pRow <= ROWS && pCol >= 1 && pCol <= COLS && pText) {
+      const r = pRow - 1;
+      const c = pCol - 1;
+      for (let i = 0; i < pText.length && c + i < COLS; i++) {
+        chars[r][c + i] = pText[i];
+        types[r][c + i] = 'preview';
+      }
+    }
+
+    return { chars, types };
   };
 
-  /** Check if character at (r, c) is part of the highlighted input overlay */
-  const isHighlighted = (r, c) => {
-    const row = parseInt(inputRow);
-    const col = parseInt(inputCol);
-    const text = inputText;
-    if (!row || !col || !text) return false;
-    return (
-      r === row - 1 &&
-      c >= col - 1 &&
-      c < col - 1 + text.length &&
-      c < COLS
-    );
-  };
-
-  const displayScreen = getDisplayScreen();
+  const { chars: displayChars, types: displayTypes } = getDisplayData();
 
   // ============================================
   //  STYLES
@@ -235,7 +300,6 @@ export default function TN3270Terminal() {
       maxWidth: '960px',
       margin: '0 auto',
     },
-
     header: {
       display: 'flex',
       alignItems: 'center',
@@ -259,15 +323,12 @@ export default function TN3270Terminal() {
       color: sessionId ? '#3eff8b' : '#ff6b6b',
       border: `1px solid ${sessionId ? '#1e3a2a' : '#3d1f24'}`,
     },
-
     toolbar: {
       display: 'flex',
       gap: '8px',
       marginBottom: '16px',
       flexWrap: 'wrap',
     },
-
-    // Screen area
     screenWrap: {
       background: '#0c0f14',
       border: '1px solid #1e3a2a',
@@ -277,11 +338,7 @@ export default function TN3270Terminal() {
       overflowX: 'auto',
       boxShadow: 'inset 0 2px 8px rgba(0,0,0,0.5)',
     },
-    screenRow: {
-      display: 'flex',
-      lineHeight: '20px',
-      height: '20px',
-    },
+    screenRow: { display: 'flex', lineHeight: '20px', height: '20px' },
     lineNum: {
       color: '#3a4a5a',
       userSelect: 'none',
@@ -291,29 +348,14 @@ export default function TN3270Terminal() {
       fontSize: '13px',
       flexShrink: 0,
     },
-    charNormal: {
-      fontSize: '13px',
-      color: '#33ff77',
-      display: 'inline-block',
-      width: '8.4px',
-      textAlign: 'center',
-      height: '20px',
-      lineHeight: '20px',
-    },
-    charHighlight: {
+    charBase: {
       fontSize: '13px',
       display: 'inline-block',
       width: '8.4px',
       textAlign: 'center',
       height: '20px',
       lineHeight: '20px',
-      background: '#664d00',
-      color: '#ffcc00',
-      borderRadius: '1px',
-      fontWeight: 700,
     },
-
-    // Section container
     section: {
       background: '#0e1218',
       border: '1px solid #1b2332',
@@ -329,19 +371,8 @@ export default function TN3270Terminal() {
       letterSpacing: '1px',
       marginBottom: '10px',
     },
-
-    // Input fields
-    inputPanel: {
-      display: 'flex',
-      gap: '12px',
-      alignItems: 'center',
-      flexWrap: 'wrap',
-    },
-    inputGroup: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '6px',
-    },
+    inputPanel: { display: 'flex', gap: '12px', alignItems: 'center', flexWrap: 'wrap' },
+    inputGroup: { display: 'flex', alignItems: 'center', gap: '6px' },
     label: {
       fontSize: '11px',
       color: '#6a7a8a',
@@ -349,22 +380,8 @@ export default function TN3270Terminal() {
       textTransform: 'uppercase',
       letterSpacing: '0.5px',
     },
-
-    // Toggle switches
-    toggleWrap: {
-      display: 'flex',
-      gap: '20px',
-      marginBottom: '12px',
-    },
-    toggle: {
-      display: 'flex',
-      alignItems: 'center',
-      gap: '8px',
-      cursor: 'pointer',
-      fontSize: '12px',
-    },
-
-    // Log area
+    toggleWrap: { display: 'flex', gap: '20px', marginBottom: '12px' },
+    toggle: { display: 'flex', alignItems: 'center', gap: '8px', cursor: 'pointer', fontSize: '12px' },
     logBox: {
       background: '#080a0e',
       border: '1px solid #1b2332',
@@ -375,18 +392,68 @@ export default function TN3270Terminal() {
       fontSize: '11px',
       lineHeight: '18px',
     },
-    logTs: {
-      color: '#3a4a5a',
-      marginRight: '6px',
+    logTs: { color: '#3a4a5a', marginRight: '6px' },
+    stagedList: {
+      background: '#0a0e14',
+      border: '1px solid #2a1a1a',
+      borderRadius: '6px',
+      padding: '8px',
+      marginTop: '10px',
+    },
+    stagedItem: {
+      display: 'flex',
+      justifyContent: 'space-between',
+      alignItems: 'center',
+      padding: '4px 8px',
+      marginBottom: '4px',
+      background: '#1a0e0e',
+      border: '1px solid #3a1a1a',
+      borderRadius: '4px',
+      fontSize: '12px',
+    },
+    stagedLabel: { color: '#ff6666', fontWeight: 600 },
+    stagedInfo: { color: '#cc8888', fontSize: '11px' },
+    stagedRemoveBtn: {
+      background: 'none',
+      border: '1px solid #4a2a2a',
+      borderRadius: '3px',
+      color: '#884444',
+      fontSize: '10px',
+      padding: '2px 6px',
+      cursor: 'pointer',
+      fontFamily: 'inherit',
+    },
+    badge: {
+      display: 'inline-flex',
+      alignItems: 'center',
+      justifyContent: 'center',
+      minWidth: '18px',
+      height: '18px',
+      borderRadius: '9px',
+      background: '#6b2020',
+      color: '#ff8888',
+      fontSize: '10px',
+      fontWeight: 700,
+      marginLeft: '6px',
+      padding: '0 5px',
     },
   };
 
-  // --- Button style helper ---
+  const charStyle = (type) => {
+    if (type === 'staged') {
+      return { ...styles.charBase, color: '#ff4444', background: '#2a0e0e', fontWeight: 700 };
+    }
+    if (type === 'preview') {
+      return { ...styles.charBase, color: '#ffcc00', background: '#664d00', fontWeight: 700, borderRadius: '1px' };
+    }
+    return { ...styles.charBase, color: '#33ff77' };
+  };
+
   const btnStyle = (variant = 'default') => {
     const variants = {
       default: { bg: '#161b22', border: '#30363d', color: '#c9d1d9' },
       primary: { bg: '#0d4429', border: '#1e6d3e', color: '#3eff8b' },
-      danger:  { bg: '#3d1216', border: '#6e2b2b', color: '#ff6b6b' },
+      stage:   { bg: '#3a2200', border: '#6b4400', color: '#ffaa00' },
       action:  { bg: '#1a1e29', border: '#2d3548', color: '#7eb6ff' },
       key:     { bg: '#1c1c2e', border: '#333366', color: '#b8b8ff' },
     };
@@ -490,17 +557,14 @@ export default function TN3270Terminal() {
 
       {/* Screen Display Area */}
       <div style={styles.screenWrap}>
-        {displayScreen.map((row, ri) => (
+        {displayChars.map((row, ri) => (
           <div key={ri} style={styles.screenRow}>
             <span style={styles.lineNum}>
               {String(ri + 1).padStart(2, '0')}
             </span>
             <span>
               {row.map((ch, ci) => (
-                <span
-                  key={ci}
-                  style={isHighlighted(ri, ci) ? styles.charHighlight : styles.charNormal}
-                >
+                <span key={ci} style={charStyle(displayTypes[ri][ci])}>
                   {ch}
                 </span>
               ))}
@@ -542,29 +606,56 @@ export default function TN3270Terminal() {
             <input
               style={inputStyle('280px')}
               type="text"
-              placeholder="Enter text to send..."
+              placeholder="Enter text to stage..."
               value={inputText}
               onChange={(e) => setInputText(e.target.value)}
-              onKeyDown={(e) => { if (e.key === 'Enter') handleSendText(); }}
+              onKeyDown={(e) => { if (e.key === 'Enter') handleStageInput(); }}
             />
           </div>
         </div>
+
+        {/* Staged Inputs List */}
+        {stagedInputs.length > 0 && (
+          <div style={styles.stagedList}>
+            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '6px' }}>
+              <span style={{ fontSize: '11px', color: '#ff6666', fontWeight: 700, textTransform: 'uppercase', letterSpacing: '0.5px' }}>
+                Staged Inputs ({stagedInputs.length})
+              </span>
+              <button style={styles.stagedRemoveBtn} onClick={clearStagedInputs}>
+                Clear All
+              </button>
+            </div>
+            {stagedInputs.map((item, i) => (
+              <div key={i} style={styles.stagedItem}>
+                <div>
+                  <span style={styles.stagedLabel}>#{i + 1}</span>
+                  <span style={styles.stagedInfo}>
+                    {' '}Row:{item.row} Col:{item.col} "{item.text}"
+                  </span>
+                </div>
+                <button style={styles.stagedRemoveBtn} onClick={() => removeStagedInput(i)}>
+                  Remove
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Terminal Keys */}
       <div style={styles.section}>
         <div style={styles.sectionTitle}>Terminal Keys</div>
-        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap' }}>
+        <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center' }}>
           <button
-            style={btnStyle('primary')}
-            onClick={handleSendText}
-            disabled={loading || !sessionId || !inputRow || !inputCol || !inputText}
+            style={btnStyle('stage')}
+            onClick={handleStageInput}
+            disabled={!inputRow || !inputCol || !inputText}
           >
-            Send Text
+            Stage Input
           </button>
           <button
             style={btnStyle('key')}
-            onClick={() => handleKeyAction('Reset (Ctrl)', '/key/reset')}
+            onClick={() => handleKeyAction('Reset', '/key/reset')}
             disabled={loading || !sessionId}
           >
             Reset
@@ -585,10 +676,13 @@ export default function TN3270Terminal() {
           </button>
           <button
             style={btnStyle('action')}
-            onClick={() => handleKeyAction('Enter', '/key/enter')}
+            onClick={handleEnter}
             disabled={loading || !sessionId}
           >
             Enter
+            {stagedInputs.length > 0 && (
+              <span style={styles.badge}>{stagedInputs.length}</span>
+            )}
           </button>
           <button
             style={btnStyle('action')}
@@ -596,6 +690,13 @@ export default function TN3270Terminal() {
             disabled={loading || !sessionId}
           >
             Tab
+          </button>
+          <button
+            style={btnStyle('key')}
+            onClick={() => handleFunctionKey('Clear')}
+            disabled={loading || !sessionId}
+          >
+            Clear
           </button>
         </div>
       </div>
@@ -612,7 +713,6 @@ export default function TN3270Terminal() {
           </button>
         </div>
 
-        {/* Toggle switches */}
         <div style={styles.toggleWrap}>
           <div style={styles.toggle} onClick={() => setLogOperations(!logOperations)}>
             <div style={toggleSwitchStyle(logOperations)}>
@@ -632,7 +732,6 @@ export default function TN3270Terminal() {
           </div>
         </div>
 
-        {/* Log output */}
         <div style={styles.logBox}>
           {logs.length === 0 && (
             <div style={{ color: '#3a4a5a', fontStyle: 'italic' }}>
