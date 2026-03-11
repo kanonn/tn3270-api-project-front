@@ -1,12 +1,11 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import API_BASE from '../config';
 
-/** Standard 3270 screen dimensions */
-const ROWS = 24;
+/** 3270 screen column count (always 80) */
 const COLS = 80;
 
-/** Create empty screen (24 rows x 80 spaces) */
-const emptyScreen = () => Array.from({ length: ROWS }, () => ' '.repeat(COLS));
+/** Default empty screen (will resize when data arrives) */
+const emptyScreen = () => Array.from({ length: 24 }, () => ' '.repeat(COLS));
 
 /**
  * TN3270 Terminal Emulator Component
@@ -79,7 +78,7 @@ export default function TN3270Terminal() {
       const padded = data.screenLines.map(line =>
         (line || '').padEnd(COLS).substring(0, COLS)
       );
-      while (padded.length < ROWS) padded.push(' '.repeat(COLS));
+      // Don't pad to fixed rows — screen may be 24 or 43 rows
       setScreenLines(padded);
     }
   };
@@ -305,16 +304,19 @@ export default function TN3270Terminal() {
    * null      = normal green
    */
   const getDisplayData = () => {
+    const numRows = screenLines.length;
     const chars = screenLines.map(line => [...line]);
-    const types = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+    const types = Array.from({ length: numRows }, () => Array(COLS).fill(null));
 
     // Layer 1: staged inputs (red)
     for (const { row, col, text } of stagedInputs) {
       const r = row - 1;
       const c = col - 1;
-      for (let i = 0; i < text.length && c + i < COLS; i++) {
-        chars[r][c + i] = text[i];
-        types[r][c + i] = 'staged';
+      if (r >= 0 && r < numRows) {
+        for (let i = 0; i < text.length && c + i < COLS; i++) {
+          chars[r][c + i] = text[i];
+          types[r][c + i] = 'staged';
+        }
       }
     }
 
@@ -322,7 +324,7 @@ export default function TN3270Terminal() {
     const pRow = parseInt(inputRow);
     const pCol = parseInt(inputCol);
     const pText = inputText;
-    if (pRow >= 1 && pRow <= ROWS && pCol >= 1 && pCol <= COLS && pText) {
+    if (pRow >= 1 && pRow <= numRows && pCol >= 1 && pCol <= COLS && pText) {
       const r = pRow - 1;
       const c = pCol - 1;
       for (let i = 0; i < pText.length && c + i < COLS; i++) {
@@ -632,8 +634,8 @@ export default function TN3270Terminal() {
               style={inputStyle('52px')}
               type="number"
               min="1"
-              max="24"
-              placeholder="1-24"
+              max="99"
+              placeholder={"1-" + screenLines.length}
               value={inputRow}
               onChange={(e) => setInputRow(e.target.value)}
             />
