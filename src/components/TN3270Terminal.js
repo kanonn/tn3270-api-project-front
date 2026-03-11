@@ -1,11 +1,11 @@
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import API_BASE from '../config';
 
-/** 3270 screen column count (always 80) */
-const COLS = 80;
+/** Default column count (will adjust based on actual screen data) */
+const DEFAULT_COLS = 80;
 
 /** Default empty screen (will resize when data arrives) */
-const emptyScreen = () => Array.from({ length: 24 }, () => ' '.repeat(COLS));
+const emptyScreen = () => Array.from({ length: 24 }, () => ' '.repeat(DEFAULT_COLS));
 
 /**
  * TN3270 Terminal Emulator Component
@@ -75,13 +75,16 @@ export default function TN3270Terminal() {
   /** Update screen from API response data */
   const updateScreen = (data) => {
     if (data?.screenLines?.length > 0) {
-      const padded = data.screenLines.map(line =>
-        (line || '').padEnd(COLS).substring(0, COLS)
-      );
-      // Don't pad to fixed rows — screen may be 24 or 43 rows
-      setScreenLines(padded);
+      // Don't truncate — screen may be 80 or 132 columns
+      const lines = data.screenLines.map(line => line || '');
+      setScreenLines(lines);
     }
   };
+
+  /** Detect actual column count from screen data */
+  const cols = screenLines.length > 0
+    ? Math.max(...screenLines.map(l => l.length), DEFAULT_COLS)
+    : DEFAULT_COLS;
 
   // ============================================
   //  STAGED INPUT SYSTEM
@@ -306,14 +309,14 @@ export default function TN3270Terminal() {
   const getDisplayData = () => {
     const numRows = screenLines.length;
     const chars = screenLines.map(line => [...line]);
-    const types = Array.from({ length: numRows }, () => Array(COLS).fill(null));
+    const types = Array.from({ length: numRows }, () => Array(cols).fill(null));
 
     // Layer 1: staged inputs (red)
     for (const { row, col, text } of stagedInputs) {
       const r = row - 1;
       const c = col - 1;
       if (r >= 0 && r < numRows) {
-        for (let i = 0; i < text.length && c + i < COLS; i++) {
+        for (let i = 0; i < text.length && c + i < cols; i++) {
           chars[r][c + i] = text[i];
           types[r][c + i] = 'staged';
         }
@@ -324,10 +327,10 @@ export default function TN3270Terminal() {
     const pRow = parseInt(inputRow);
     const pCol = parseInt(inputCol);
     const pText = inputText;
-    if (pRow >= 1 && pRow <= numRows && pCol >= 1 && pCol <= COLS && pText) {
+    if (pRow >= 1 && pRow <= numRows && pCol >= 1 && pCol <= cols && pText) {
       const r = pRow - 1;
       const c = pCol - 1;
-      for (let i = 0; i < pText.length && c + i < COLS; i++) {
+      for (let i = 0; i < pText.length && c + i < cols; i++) {
         chars[r][c + i] = pText[i];
         types[r][c + i] = 'preview';
       }
@@ -348,7 +351,7 @@ export default function TN3270Terminal() {
       color: '#c9d1d9',
       fontFamily: "'JetBrains Mono', 'Fira Code', 'Cascadia Code', 'Consolas', monospace",
       padding: '20px',
-      maxWidth: '960px',
+      maxWidth: '1200px',
       margin: '0 auto',
     },
     header: {
@@ -389,23 +392,23 @@ export default function TN3270Terminal() {
       overflowX: 'auto',
       boxShadow: 'inset 0 2px 8px rgba(0,0,0,0.5)',
     },
-    screenRow: { display: 'flex', lineHeight: '20px', height: '20px' },
+    screenRow: { display: 'flex', lineHeight: '18px', height: '18px' },
     lineNum: {
       color: '#3a4a5a',
       userSelect: 'none',
       width: '36px',
       textAlign: 'right',
       paddingRight: '8px',
-      fontSize: '13px',
+      fontSize: '12px',
       flexShrink: 0,
     },
     charBase: {
-      fontSize: '13px',
+      fontSize: '12px',
       display: 'inline-block',
-      width: '8.4px',
+      width: '7.4px',
       textAlign: 'center',
-      height: '20px',
-      lineHeight: '20px',
+      height: '18px',
+      lineHeight: '18px',
     },
     section: {
       background: '#0e1218',
@@ -647,7 +650,7 @@ export default function TN3270Terminal() {
               type="number"
               min="1"
               max="80"
-              placeholder="1-80"
+              placeholder={"1-" + cols}
               value={inputCol}
               onChange={(e) => setInputCol(e.target.value)}
             />
@@ -728,10 +731,10 @@ export default function TN3270Terminal() {
           </button>
           <button
             style={btnStyle('key')}
-            onClick={() => handleFunctionKey('PF3')}
+            onClick={() => handleFunctionKey('PF11')}
             disabled={loading || !sessionId}
           >
-            F3
+            F11
           </button>
           <button
             style={btnStyle('action')}
