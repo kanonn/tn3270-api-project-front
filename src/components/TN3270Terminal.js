@@ -17,7 +17,7 @@ const emptyScreen = () => Array.from({ length: 24 }, () => ' '.repeat(DEFAULT_CO
  * - Enter sends all staged inputs then presses Enter
  * - Operation logging with toggle switches
  */
-export default function TN3270Terminal() {
+export default function TN3270Terminal({ onOpenOrderModel }) {
   // --- State ---
   const [sessionId, setSessionId] = useState(null);
   const [screenLines, setScreenLines] = useState(emptyScreen());
@@ -508,6 +508,7 @@ export default function TN3270Terminal() {
       default: { bg: '#161b22', border: '#30363d', color: '#c9d1d9' },
       primary: { bg: '#0d4429', border: '#1e6d3e', color: '#3eff8b' },
       stage:   { bg: '#3a2200', border: '#6b4400', color: '#ffaa00' },
+      order:   { bg: '#1a1040', border: '#3a2080', color: '#aa88ff' },
       action:  { bg: '#1a1e29', border: '#2d3548', color: '#7eb6ff' },
       key:     { bg: '#1c1c2e', border: '#333366', color: '#b8b8ff' },
     };
@@ -601,6 +602,13 @@ export default function TN3270Terminal() {
           disabled={loading || !sessionId}
         >
           Refresh Screen
+        </button>
+        <button
+          style={btnStyle('order')}
+          onClick={() => onOpenOrderModel && onOpenOrderModel(screenLines, sessionId)}
+          disabled={loading || !sessionId}
+        >
+          Order Model
         </button>
         {loading && (
           <span style={{ fontSize: '12px', color: '#6a7a8a', alignSelf: 'center' }}>
