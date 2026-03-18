@@ -17,7 +17,7 @@ const emptyScreen = () => Array.from({ length: 24 }, () => ' '.repeat(DEFAULT_CO
  * - Enter sends all staged inputs then presses Enter
  * - Operation logging with toggle switches
  */
-export default function TN3270Terminal({ onOpenOrderModel }) {
+export default function TN3270Terminal({ onOpenOrderModel, onScreenUpdate }) {
   // --- State ---
   const [sessionId, setSessionId] = useState(null);
   const [screenLines, setScreenLines] = useState(emptyScreen());
@@ -75,9 +75,10 @@ export default function TN3270Terminal({ onOpenOrderModel }) {
   /** Update screen from API response data */
   const updateScreen = (data) => {
     if (data?.screenLines?.length > 0) {
-      // Don't truncate — screen may be 80 or 132 columns
       const lines = data.screenLines.map(line => line || '');
       setScreenLines(lines);
+      // Notify parent so Order Model can access the latest screen data
+      if (onScreenUpdate) onScreenUpdate(lines);
     }
   };
 
@@ -605,7 +606,7 @@ export default function TN3270Terminal({ onOpenOrderModel }) {
         </button>
         <button
           style={btnStyle('order')}
-          onClick={() => onOpenOrderModel && onOpenOrderModel(screenLines, sessionId)}
+          onClick={() => onOpenOrderModel && onOpenOrderModel()}
           disabled={loading || !sessionId}
         >
           Order Model

@@ -1,48 +1,49 @@
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
+import { Routes, Route } from 'react-router-dom';
 import TN3270Terminal from './components/TN3270Terminal';
 import OrderModelScreen from './components/OrderModelScreen';
+import PocPage from './components/PocPage';
 
 /**
- * Main App with screen navigation.
- * Terminal screen is the default; Order Model is opened via button.
- * The 3270 session and screen data are shared between screens.
+ * Main App with routing:
+ *   /           -> Terminal + Order Model (existing)
+ *   /poc.index  -> POC automation page (new)
  */
 function App() {
-  const [currentScreen, setCurrentScreen] = useState('terminal');
-  const [sharedScreenLines, setSharedScreenLines] = useState([]);
-  const [sharedSessionId, setSharedSessionId] = useState(null);
+  // --- Terminal + Order state ---
+  const [showOrder, setShowOrder] = useState(false);
+  const [currentScreenLines, setCurrentScreenLines] = useState([]);
 
-  const openOrderModel = (screenLines, sessionId) => {
-    setSharedScreenLines(screenLines);
-    setSharedSessionId(sessionId);
-    setCurrentScreen('order');
-  };
+  const handleScreenUpdate = useCallback((lines) => {
+    setCurrentScreenLines(lines);
+  }, []);
 
-  const backToTerminal = () => {
-    setCurrentScreen('terminal');
-  };
-
-  const handleOrderSave = (data) => {
-    console.log('Order save data:', data);
-    // Future: send edited data back to 3270 via staged inputs
-    alert('Save data logged to console. (Send-back logic not yet implemented)');
-  };
-
-  if (currentScreen === 'order') {
-    return (
-      <OrderModelScreen
-        screenLines={sharedScreenLines}
-        sessionId={sharedSessionId}
-        onBack={backToTerminal}
-        onSave={handleOrderSave}
-      />
-    );
-  }
+  const TerminalView = () => (
+    <div>
+      <div style={{ display: showOrder ? 'none' : 'block' }}>
+        <TN3270Terminal
+          onOpenOrderModel={() => setShowOrder(true)}
+          onScreenUpdate={handleScreenUpdate}
+        />
+      </div>
+      {showOrder && (
+        <OrderModelScreen
+          screenLines={currentScreenLines}
+          onBack={() => setShowOrder(false)}
+          onSave={(data) => {
+            console.log('Order save data:', data);
+            alert('Save data logged to console.');
+          }}
+        />
+      )}
+    </div>
+  );
 
   return (
-    <TN3270Terminal
-      onOpenOrderModel={openOrderModel}
-    />
+    <Routes>
+      <Route path="/" element={<TerminalView />} />
+      <Route path="/poc.index" element={<PocPage />} />
+    </Routes>
   );
 }
 
