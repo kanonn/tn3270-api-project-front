@@ -2,15 +2,16 @@ import { useState, useCallback } from 'react';
 import { Routes, Route } from 'react-router-dom';
 import TN3270Terminal from './components/TN3270Terminal';
 import OrderModelScreen from './components/OrderModelScreen';
-import PocPage from './components/PocPage';
+import UketsukePage from './components/UketsukePage';
+import TehaiKidoPage from './components/TehaiKidoPage';
 
 /**
- * Main App with routing:
- *   /           -> Terminal + Order Model (existing)
- *   /poc.index  -> POC automation page (new)
+ * Routing:
+ *   /                -> Terminal + Order Model
+ *   /uketsuke.index  -> Uketsuke (受付) page
+ *   /tehai.index     -> Tehai Kido (手配起動) page
  */
 function App() {
-  // --- Terminal + Order state ---
   const [showOrder, setShowOrder] = useState(false);
   const [currentScreenLines, setCurrentScreenLines] = useState([]);
 
@@ -30,10 +31,7 @@ function App() {
         <OrderModelScreen
           screenLines={currentScreenLines}
           onBack={() => setShowOrder(false)}
-          onSave={(data) => {
-            console.log('Order save data:', data);
-            alert('Save data logged to console.');
-          }}
+          onSave={(data) => { console.log('Order save:', data); alert('Logged.'); }}
         />
       )}
     </div>
@@ -42,7 +40,8 @@ function App() {
   return (
     <Routes>
       <Route path="/" element={<TerminalView />} />
-      <Route path="/poc.index" element={<PocPage />} />
+      <Route path="/uketsuke.index" element={<UketsukePage />} />
+      <Route path="/tehai.index" element={<TehaiKidoPage />} />
     </Routes>
   );
 }
