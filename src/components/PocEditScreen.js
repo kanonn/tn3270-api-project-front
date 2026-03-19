@@ -3,11 +3,11 @@ import React, { useState, useEffect, useMemo } from 'react';
 /**
  * POC Edit Screen for TB03 Parts Order.
  *
- * Uses character-by-character rendering: each character in a line is a <span>.
- * Editable fields are rendered as <input> elements that REPLACE the character spans
- * at the exact column positions. No absolute positioning = no offset issues.
+ * Terminal dark theme: black background, dark blue text.
+ * Editable fields: red text on black background (no red bg highlight).
  *
- * POC-style theme (light background, red inputs).
+ * Active row check: cols 12-22 must have non-space, non-underscore-only content.
+ * Opacity is always 1 (no dimming).
  */
 
 const EDITABLE_FIELDS = [
@@ -28,16 +28,14 @@ const BLOCK_NO_START = 21;
 const BLOCK_NO_END = 25;
 const BLOCK_NO_ROW = 2;
 
-const CW = '7.4px';  // character width
-const CH = '18px';    // character height
-const FS = '11.5px';  // font size
+const CW = '7.4px';
+const CH = '18px';
+const FS = '11.5px';
 
 function extract(line, sc, ec) {
   if (!line) return '';
   return line.substring(sc - 1, ec) || '';
 }
-
-function hasContent(s) { return s && s.trim().length > 0; }
 
 export default function PocEditScreen({ screenLines, onClose, onSave }) {
   const [blockNo, setBlockNo] = useState('');
@@ -56,12 +54,13 @@ export default function PocEditScreen({ screenLines, onClose, onSave }) {
     setFields(v);
   }, [screenLines]);
 
+  // Active row: cols 12-22 must have content that is not just underscores
   const activeRows = useMemo(() => {
     const res = {};
     if (!screenLines) return res;
     for (let r = DATA_ROW_START; r <= DATA_ROW_END; r++) {
-      // Row is editable only if cols 12-22 have non-space content
-      res[r] = hasContent(extract(screenLines[r - 1] || '', 12, 22));
+      const targetStr = extract(screenLines[r - 1] || '', 12, 22).trim();
+      res[r] = targetStr.length > 0 && !/^_+$/.test(targetStr);
     }
     return res;
   }, [screenLines]);
@@ -70,10 +69,9 @@ export default function PocEditScreen({ screenLines, onClose, onSave }) {
     setFields(prev => ({ ...prev, [`${r}-${fid}`]: val }));
   };
 
-  // Build a map: for data rows, which columns are covered by which editable field?
   const getFieldMap = (rowNum) => {
     if (!activeRows[rowNum]) return null;
-    const map = {}; // col (0-based) -> { fieldId, isStart, charCount }
+    const map = {};
     for (const f of EDITABLE_FIELDS) {
       for (let c = f.startCol; c <= f.endCol; c++) {
         map[c - 1] = { fieldId: f.id, isStart: c === f.startCol, charCount: f.endCol - f.startCol + 1 };
@@ -82,54 +80,58 @@ export default function PocEditScreen({ screenLines, onClose, onSave }) {
     return map;
   };
 
-  // Same for blockNo on row 2
   const blockNoMap = {};
   for (let c = BLOCK_NO_START; c <= BLOCK_NO_END; c++) {
     blockNoMap[c - 1] = { isStart: c === BLOCK_NO_START, charCount: BLOCK_NO_END - BLOCK_NO_START + 1 };
   }
 
+  // Terminal dark theme styles
   const st = {
     wrap: {
-      background: '#f7fafc', border: '2px solid #4299e1', borderRadius: '12px',
+      background: '#0a0f14', border: '1px solid #1e3a5a', borderRadius: '10px',
       padding: '16px', marginTop: '16px', overflowX: 'auto',
     },
     titleBar: {
       display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '10px',
     },
-    titleText: { fontSize: '14px', fontWeight: 700, color: '#2b6cb0' },
+    titleText: { fontSize: '14px', fontWeight: 700, color: '#5a9fd4', letterSpacing: '1px' },
     closeBtn: {
-      padding: '6px 16px', fontSize: '12px', fontWeight: 600, border: '1px solid #cbd5e0',
-      borderRadius: '6px', background: '#edf2f7', color: '#4a5568', cursor: 'pointer', marginRight: '8px',
+      padding: '6px 16px', fontSize: '12px', fontWeight: 600, border: '1px solid #2a4a6a',
+      borderRadius: '6px', background: '#0e1a2a', color: '#7ab8e0', cursor: 'pointer', marginRight: '8px',
     },
     saveBtn: {
       padding: '6px 16px', fontSize: '12px', fontWeight: 600, border: 'none',
-      borderRadius: '6px', background: '#48bb78', color: '#fff', cursor: 'pointer',
+      borderRadius: '6px', background: '#1a6a3a', color: '#3eff8b', cursor: 'pointer',
     },
-    row: (dimmed) => ({
+    // Opacity always 1 — no dimming
+    row: () => ({
       display: 'flex', height: CH, lineHeight: CH, whiteSpace: 'pre',
       fontFamily: "'JetBrains Mono', 'Fira Code', 'Consolas', monospace",
-      fontSize: FS, opacity: dimmed ? 0.3 : 1,
+      fontSize: FS, opacity: 1,
     }),
     lineNum: {
-      color: '#a0aec0', userSelect: 'none', width: '28px', textAlign: 'right',
+      color: '#2a4a6a', userSelect: 'none', width: '28px', textAlign: 'right',
       paddingRight: '6px', fontSize: '10px', flexShrink: 0, lineHeight: CH,
     },
+    // Normal character: dark blue on black
     char: {
       display: 'inline-block', width: CW, textAlign: 'center', height: CH, lineHeight: CH,
-      color: '#2d3748', fontSize: FS,
+      color: '#4a7ab8', fontSize: FS,
     },
+    // Editable input: red text on black background (no red bg)
     editInput: (charCount) => ({
       display: 'inline-block', width: `calc(${CW} * ${charCount})`,
       height: CH, lineHeight: CH, fontSize: FS, fontFamily: 'inherit',
-      color: '#c53030', background: '#fed7d7', border: 'none',
-      borderBottom: '2px solid #fc8181', outline: 'none', padding: '0',
+      color: '#ff6666', background: '#0a0f14', border: 'none',
+      borderBottom: '1px solid #3a2020', outline: 'none', padding: '0',
       margin: '0', boxSizing: 'border-box', textAlign: 'left',
     }),
+    // Block No input: orange text on black
     blockInput: (charCount) => ({
       display: 'inline-block', width: `calc(${CW} * ${charCount})`,
       height: CH, lineHeight: CH, fontSize: FS, fontFamily: 'inherit',
-      color: '#c53030', background: '#fefcbf', border: 'none',
-      borderBottom: '2px solid #dd6b20', outline: 'none', padding: '0',
+      color: '#ffaa44', background: '#0a0f14', border: 'none',
+      borderBottom: '1px solid #4a3a1a', outline: 'none', padding: '0',
       margin: '0', boxSizing: 'border-box', textAlign: 'left',
     }),
   };
@@ -138,7 +140,6 @@ export default function PocEditScreen({ screenLines, onClose, onSave }) {
     const rowNum = idx + 1;
     const isDataRow = rowNum >= DATA_ROW_START && rowNum <= DATA_ROW_END;
     const isActive = isDataRow && activeRows[rowNum];
-    const isDimmed = isDataRow && !isActive;
     const fMap = isActive ? getFieldMap(rowNum) : null;
     const isBlockRow = rowNum === BLOCK_NO_ROW;
     const chars = (line || '').split('');
@@ -146,7 +147,6 @@ export default function PocEditScreen({ screenLines, onClose, onSave }) {
     const elements = [];
     let ci = 0;
     while (ci < chars.length) {
-      // Check block no field (row 2)
       if (isBlockRow && blockNoMap[ci]) {
         if (blockNoMap[ci].isStart) {
           const cnt = blockNoMap[ci].charCount;
@@ -154,15 +154,11 @@ export default function PocEditScreen({ screenLines, onClose, onSave }) {
             <input key={`blk-${ci}`} style={st.blockInput(cnt)} value={blockNo}
               onChange={(e) => setBlockNo(e.target.value)} maxLength={cnt} />
           );
-          ci += cnt;
-          continue;
+          ci += cnt; continue;
         }
-        // Non-start chars of block field are skipped (covered by input)
-        ci++;
-        continue;
+        ci++; continue;
       }
 
-      // Check editable data field
       if (fMap && fMap[ci]) {
         if (fMap[ci].isStart) {
           const { fieldId, charCount } = fMap[ci];
@@ -173,22 +169,17 @@ export default function PocEditScreen({ screenLines, onClose, onSave }) {
               onChange={(e) => updateField(rowNum, fieldId, e.target.value)}
               maxLength={charCount} />
           );
-          ci += charCount;
-          continue;
+          ci += charCount; continue;
         }
-        ci++;
-        continue;
+        ci++; continue;
       }
 
-      // Normal character
-      elements.push(
-        <span key={ci} style={st.char}>{chars[ci]}</span>
-      );
+      elements.push(<span key={ci} style={st.char}>{chars[ci]}</span>);
       ci++;
     }
 
     return (
-      <div key={idx} style={st.row(isDimmed)}>
+      <div key={idx} style={st.row()}>
         <span style={st.lineNum}>{String(rowNum).padStart(2, '0')}</span>
         <span style={{ display: 'flex' }}>{elements}</span>
       </div>

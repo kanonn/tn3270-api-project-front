@@ -8,10 +8,14 @@ import TehaiKidoPage from './components/TehaiKidoPage';
 /**
  * Routing:
  *   /                -> Terminal + Order Model
- *   /uketsuke.index  -> Uketsuke (受付) page
- *   /tehai.index     -> Tehai Kido (手配起動) page
+ *   /uketsuke.index  -> Uketsuke page
+ *   /tehai.index     -> Tehai Kido page
+ *
+ * IMPORTANT: The terminal view is rendered directly in the Route element,
+ * NOT as a nested function component. Defining it as a function inside App
+ * causes React to unmount/remount on every re-render, losing connection state.
  */
-function App() {
+function TerminalPage() {
   const [showOrder, setShowOrder] = useState(false);
   const [currentScreenLines, setCurrentScreenLines] = useState([]);
 
@@ -19,7 +23,7 @@ function App() {
     setCurrentScreenLines(lines);
   }, []);
 
-  const TerminalView = () => (
+  return (
     <div>
       <div style={{ display: showOrder ? 'none' : 'block' }}>
         <TN3270Terminal
@@ -36,10 +40,12 @@ function App() {
       )}
     </div>
   );
+}
 
+function App() {
   return (
     <Routes>
-      <Route path="/" element={<TerminalView />} />
+      <Route path="/" element={<TerminalPage />} />
       <Route path="/uketsuke.index" element={<UketsukePage />} />
       <Route path="/tehai.index" element={<TehaiKidoPage />} />
     </Routes>
