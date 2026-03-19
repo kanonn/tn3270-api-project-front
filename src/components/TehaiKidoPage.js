@@ -52,14 +52,12 @@ export default function TehaiKidoPage() {
     }
   };
 
-  // ===== F11 (Step E-F with T1 + user-entered password) =====
+  // ===== F11 (just sends F11 key, no password) =====
   const handleF11 = async () => {
     if (!sid || !connected) return;
     setRunning(true);
     setError(null);
     try {
-      if (!password) throw new Error('Please enter PASSWORD before pressing F11.');
-
       logStep('[TehaiKido] F11...');
       await delayMs(D);
       let json = await apiCall('POST', '/key/function', { keyName: 'PF11' }, sid);
@@ -68,22 +66,8 @@ export default function TehaiKidoPage() {
 
       const pwLabel = screenText(lines, 10, 21, 8);
       if (pwLabel !== 'PASSWORD') throw new Error(`Expected "PASSWORD", got "${pwLabel}"`);
-
-      // Use password from input field
-      await delayMs(D);
-      await apiCall('POST', '/menu/command', { row: 10, column: 32, command: password }, sid);
-      await delayMs(D);
-      await apiCall('POST', '/menu/command', { row: 10, column: 62, command: 'T1' }, sid);
-      await delayMs(D);
-      json = await apiCall('POST', '/key/enter', null, sid);
-      lines = getLines(json);
-      logApi('Enter after password', lines);
-
-      if (screenText(lines, 1, 5, 4) !== 'TB01') {
-        throw new Error(`Expected "TB01", got "${screenText(lines, 1, 5, 4)}"`);
-      }
+      logOk('PASSWORD prompt found. Enter password and click 手配起動.');
       setLoggedIn(true);
-      logOk('TB01 confirmed. Ready.');
     } catch (e) {
       logErr(e.message);
       setError(e.message);
@@ -119,7 +103,7 @@ export default function TehaiKidoPage() {
     }
   };
 
-  // ===== 手配起動 (Step G: write settsu no, pause before Enter) =====
+  // ===== 手配起動 (password + T1 + Enter, then settsu no) =====
   const handleTehaiKido = async () => {
     if (!sid || !loggedIn) return;
     setRunning(true);
@@ -128,12 +112,31 @@ export default function TehaiKidoPage() {
     setEditScreenLines(null);
     setSettsuWritten(false);
     try {
+      // Step E: Password + T1 + Enter
+      if (!password) throw new Error('Please enter PASSWORD.');
+      logStep('[TehaiKido] Step E: Sending password + T1...');
+      await delayMs(D);
+      await apiCall('POST', '/menu/command', { row: 10, column: 32, command: password }, sid);
+      await delayMs(D);
+      await apiCall('POST', '/menu/command', { row: 10, column: 62, command: 'T1' }, sid);
+      await delayMs(D);
+      let json = await apiCall('POST', '/key/enter', null, sid);
+      let lines = getLines(json);
+      logApi('Enter after password', lines);
+
+      // Step F: TB01 check
+      if (screenText(lines, 1, 5, 4) !== 'TB01') {
+        throw new Error(`Expected "TB01", got "${screenText(lines, 1, 5, 4)}"`);
+      }
+      logOk('TB01 confirmed.');
+
+      // Step G: Write settsu no
       logStep('[TehaiKido] Step G: Writing Settsu No...');
       if (!settsuNo.includes('-')) throw new Error(`Invalid: "${settsuNo}"`);
       const [left, right] = settsuNo.split('-');
 
       await delayMs(D);
-      let json = await apiCall('POST', '/menu/command', { row: 14, column: 64, command: left }, sid);
+      json = await apiCall('POST', '/menu/command', { row: 14, column: 64, command: left }, sid);
       logApi('Write left part', getLines(json));
       await delayMs(D);
       json = await apiCall('POST', '/menu/command', { row: 14, column: 71, command: right }, sid);
