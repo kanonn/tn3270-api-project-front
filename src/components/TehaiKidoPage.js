@@ -1,30 +1,41 @@
 import React, { useState } from 'react';
 import { POC_CONFIG } from '../config';
 import { screenText, delayMs, apiCall, getLines, runLoginStepsAtoD } from './pocHelpers';
-import { useLog, S, LogPanel } from './pocStyles';
+import { useLog, S, AnemsDisplayPanel, LogPanel } from './pocStyles';
 import PocEditScreen from './PocEditScreen';
 
 /**
  * Tehai Kido (手配起動) Page
  *
- * Same connection flow as Uketsuke but:
- * - Step E sends "T1" (not "U1")
- * - Step F checks "TB01" (not "TC01")
- * - Step H opens inline edit screen
+ * Layout:
+ *   Row 1: [ANEMS接続] [F11] ---status--- [ANEMS切断]
+ *   Row 2: [設通No.___] [PASSWORD___] MENU:T1 [手配起動] [手配起動編集]
+ *   Error display
+ *   Edit screen (when active)
+ *   ANEMS Screen Display
+ *   Operation Log
+ *
+ * Flow:
+ *   1. ANEMS接続 → connect + login to ANEMS (steps A-D)
+ *   2. F11 → enter subsystem with T1 + password (steps E-F)
+ *   3. 手配起動 → write settsu no to 3270, pause (step G, no Enter yet)
+ *   4. 手配起動編集 → press Enter, show edit screen (step H)
  */
 export default function TehaiKidoPage() {
   const [sid, setSid] = useState(null);
   const [connected, setConnected] = useState(false);
   const [loggedIn, setLoggedIn] = useState(false);
+  const [settsuWritten, setSettsuWritten] = useState(false); // after step G, before Enter
   const [running, setRunning] = useState(false);
   const [error, setError] = useState(null);
   const [settsuNo, setSettsuNo] = useState('');
+  const [password, setPassword] = useState('');
   const [editScreenLines, setEditScreenLines] = useState(null);
   const [showEdit, setShowEdit] = useState(false);
-  const { logs, logEndRef, logStep, logOk, logErr, logApi, clearLogs } = useLog();
+  const { logs, anemsScreen, logEndRef, logStep, logOk, logErr, logApi, clearLogs } = useLog();
   const D = POC_CONFIG.operationDelay;
 
-  // ===== ANEMS接続 =====
+  // ===== ANEMS接続 (Steps A-D) =====
   const handleConnect = async () => {
     setRunning(true);
     setError(null);
@@ -33,6 +44,46 @@ export default function TehaiKidoPage() {
       setSid(newSid);
       setConnected(true);
       logOk('ANEMS connected.');
+    } catch (e) {
+      logErr(e.message);
+      setError(e.message);
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  // ===== F11 (Step E-F with T1 + user-entered password) =====
+  const handleF11 = async () => {
+    if (!sid || !connected) return;
+    setRunning(true);
+    setError(null);
+    try {
+      if (!password) throw new Error('Please enter PASSWORD before pressing F11.');
+
+      logStep('[TehaiKido] F11...');
+      await delayMs(D);
+      let json = await apiCall('POST', '/key/function', { keyName: 'PF11' }, sid);
+      let lines = getLines(json);
+      logApi('F11', lines);
+
+      const pwLabel = screenText(lines, 10, 21, 8);
+      if (pwLabel !== 'PASSWORD') throw new Error(`Expected "PASSWORD", got "${pwLabel}"`);
+
+      // Use password from input field
+      await delayMs(D);
+      await apiCall('POST', '/menu/command', { row: 10, column: 32, command: password }, sid);
+      await delayMs(D);
+      await apiCall('POST', '/menu/command', { row: 10, column: 62, command: 'T1' }, sid);
+      await delayMs(D);
+      json = await apiCall('POST', '/key/enter', null, sid);
+      lines = getLines(json);
+      logApi('Enter after password', lines);
+
+      if (screenText(lines, 1, 5, 4) !== 'TB01') {
+        throw new Error(`Expected "TB01", got "${screenText(lines, 1, 5, 4)}"`);
+      }
+      setLoggedIn(true);
+      logOk('TB01 confirmed. Ready.');
     } catch (e) {
       logErr(e.message);
       setError(e.message);
@@ -55,10 +106,11 @@ export default function TehaiKidoPage() {
       }
       setConnected(false);
       setLoggedIn(false);
+      setSettsuWritten(false);
       setSid(null);
       setShowEdit(false);
       setEditScreenLines(null);
-      logOk('ANEMS disconnected.');
+      logOk('Disconnected.');
     } catch (e) {
       logErr(e.message);
       setError(e.message);
@@ -67,68 +119,48 @@ export default function TehaiKidoPage() {
     }
   };
 
-  // ===== F11 (login with T1) =====
-  const handleF11 = async () => {
-    if (!sid || !connected) return;
-    setRunning(true);
-    setError(null);
-    try {
-      logStep('[TehaiKido] F11: entering subsystem...');
-      await delayMs(D);
-      let json = await apiCall('POST', '/key/function', { keyName: 'PF11' }, sid);
-      let lines = getLines(json);
-      logApi('F11 result', lines);
-
-      // Step E: Password with T1
-      const pwLabel = screenText(lines, 10, 21, 8);
-      if (pwLabel !== 'PASSWORD') throw new Error(`Expected "PASSWORD", got "${pwLabel}"`);
-      logOk('PASSWORD prompt found.');
-
-      await delayMs(D);
-      await apiCall('POST', '/menu/command', { row: 10, column: 32, command: POC_CONFIG.password }, sid);
-      await delayMs(D);
-      await apiCall('POST', '/menu/command', { row: 10, column: 62, command: 'T1' }, sid);
-      await delayMs(D);
-      json = await apiCall('POST', '/key/enter', null, sid);
-      lines = getLines(json);
-      logApi('Enter after password', lines);
-
-      // Step F: TB01 check
-      const tb01 = screenText(lines, 1, 5, 4);
-      if (tb01 !== 'TB01') throw new Error(`Expected "TB01", got "${tb01}"`);
-      setLoggedIn(true);
-      logOk('TB01 confirmed. Subsystem ready.');
-    } catch (e) {
-      logErr(e.message);
-      setError(e.message);
-    } finally {
-      setRunning(false);
-    }
-  };
-
-  // ===== 手配起動 (settsu lookup + edit) =====
+  // ===== 手配起動 (Step G: write settsu no, pause before Enter) =====
   const handleTehaiKido = async () => {
     if (!sid || !loggedIn) return;
     setRunning(true);
     setError(null);
     setShowEdit(false);
     setEditScreenLines(null);
+    setSettsuWritten(false);
     try {
-      logStep('[TehaiKido] Step G: Settsu No...');
-      if (!settsuNo.includes('-')) throw new Error(`Invalid format: "${settsuNo}"`);
+      logStep('[TehaiKido] Step G: Writing Settsu No...');
+      if (!settsuNo.includes('-')) throw new Error(`Invalid: "${settsuNo}"`);
       const [left, right] = settsuNo.split('-');
 
       await delayMs(D);
-      await apiCall('POST', '/menu/command', { row: 14, column: 64, command: left }, sid);
+      let json = await apiCall('POST', '/menu/command', { row: 14, column: 64, command: left }, sid);
+      logApi('Write left part', getLines(json));
       await delayMs(D);
-      await apiCall('POST', '/menu/command', { row: 14, column: 71, command: right }, sid);
+      json = await apiCall('POST', '/menu/command', { row: 14, column: 71, command: right }, sid);
+      logApi('Write right part', getLines(json));
+
+      setSettsuWritten(true);
+      logOk('Settsu No written. Press "手配起動編集" to continue.');
+    } catch (e) {
+      logErr(e.message);
+      setError(e.message);
+    } finally {
+      setRunning(false);
+    }
+  };
+
+  // ===== 手配起動編集 (Step H: press Enter, show edit screen) =====
+  const handleTehaiEdit = async () => {
+    if (!sid || !settsuWritten) return;
+    setRunning(true);
+    setError(null);
+    try {
+      logStep('[TehaiKido] Step H: Pressing Enter, loading edit screen...');
       await delayMs(D);
       const json = await apiCall('POST', '/key/enter', null, sid);
       const lines = getLines(json);
-      logApi('Enter after settsu', lines);
+      logApi('Enter result', lines);
 
-      // Step H: Show edit screen
-      logStep('[TehaiKido] Step H: Loading edit screen...');
       setEditScreenLines(lines);
       setShowEdit(true);
       const row27 = lines.length >= 27 ? lines[26].trim() : '';
@@ -148,38 +180,46 @@ export default function TehaiKidoPage() {
       <div style={S.title}>手配起動 (Tehai Kido)</div>
 
       <div style={S.panel}>
-        {/* Connection row */}
+        {/* Row 1: [ANEMS接続] [F11] ---status--- [ANEMS切断] */}
         <div style={S.row}>
-          <button style={{ ...S.btnSmall('#3182ce'), ...(running || connected ? S.btnDisabled : {}) }}
+          <button style={{ ...S.btn('#3182ce'), ...(running || connected ? S.btnDisabled : {}) }}
             onClick={handleConnect} disabled={running || connected}>
             {running && !connected ? <span><span style={S.spinner}/>...</span> : 'ANEMS接続'}
           </button>
-          <button style={{ ...S.btnSmall('#e53e3e'), ...(running || !connected ? S.btnDisabled : {}) }}
-            onClick={handleDisconnect} disabled={running || !connected}>
-            ANEMS切断
-          </button>
-          <span style={S.statusLabel(connected)}>{statusText}</span>
-        </div>
-
-        {/* F11 row */}
-        <div style={S.row}>
-          <button style={{ ...S.btnSmall('#805ad5'), ...(running || !connected || loggedIn ? S.btnDisabled : {}) }}
+          <button style={{ ...S.btn('#805ad5'), ...(running || !connected || loggedIn ? S.btnDisabled : {}) }}
             onClick={handleF11} disabled={running || !connected || loggedIn}>
             F11
           </button>
+          <div style={S.spacer} />
+          <span style={S.statusLabel(connected)}>{statusText}</span>
+          <div style={S.spacer} />
+          <button style={{ ...S.btn('#e53e3e'), ...(running || !connected ? S.btnDisabled : {}) }}
+            onClick={handleDisconnect} disabled={running || !connected}>
+            ANEMS切断
+          </button>
         </div>
 
-        {/* Settsu No + 手配起動 */}
+        {/* Row 2: [設通No.] [PASSWORD] MENU:T1 [手配起動] [手配起動編集] */}
         <div style={S.row}>
-          <div style={{ flex: 1 }}>
-            <label style={S.label}>設通No.</label>
-            <input style={S.inputSmall} value={settsuNo}
-              onChange={(e) => setSettsuNo(e.target.value)}
-              placeholder="ex: QL6140-00075" disabled={running || !loggedIn} />
+          <span style={S.labelInline}>設通No.</span>
+          <input style={{ ...S.input, width: '180px' }} value={settsuNo}
+            onChange={(e) => setSettsuNo(e.target.value)}
+            placeholder="ex: QL6140-00075" disabled={running || !loggedIn} />
+          <span style={S.labelInline}>PASSWORD</span>
+          <input style={{ ...S.input, width: '120px' }} type="password" value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="password" disabled={running || !connected} />
+          <div style={S.menuLabel}>
+            <span style={{ color: '#718096', fontSize: '11px' }}>MENU:</span>
+            <span style={{ fontWeight: 700 }}>T1</span>
           </div>
-          <button style={{ ...S.btn('#38a169'), ...(running || !loggedIn || !settsuNo ? S.btnDisabled : {}), marginTop: '20px' }}
+          <button style={{ ...S.btn('#38a169'), ...(running || !loggedIn || !settsuNo ? S.btnDisabled : {}) }}
             onClick={handleTehaiKido} disabled={running || !loggedIn || !settsuNo}>
             手配起動
+          </button>
+          <button style={{ ...S.btn('#d69e2e'), ...(running || !settsuWritten ? S.btnDisabled : {}) }}
+            onClick={handleTehaiEdit} disabled={running || !settsuWritten}>
+            手配起動編集
           </button>
         </div>
 
@@ -195,6 +235,10 @@ export default function TehaiKidoPage() {
         )}
       </div>
 
+      {/* ANEMS Screen Display */}
+      <AnemsDisplayPanel anemsScreen={anemsScreen} />
+
+      {/* Operation Log */}
       <LogPanel logs={logs} logEndRef={logEndRef} clearLogs={clearLogs} />
     </div>
   );
