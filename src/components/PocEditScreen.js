@@ -60,7 +60,8 @@ export default function PocEditScreen({ screenLines, onClose, onSave }) {
     const res = {};
     if (!screenLines) return res;
     for (let r = DATA_ROW_START; r <= DATA_ROW_END; r++) {
-      res[r] = hasContent(extract(screenLines[r - 1] || '', 11, 25));
+      // Row is editable only if cols 12-22 have non-space content
+      res[r] = hasContent(extract(screenLines[r - 1] || '', 12, 22));
     }
     return res;
   }, [screenLines]);

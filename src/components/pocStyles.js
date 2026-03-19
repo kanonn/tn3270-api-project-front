@@ -179,29 +179,47 @@ export function AnemsDisplayPanel({ anemsScreen }) {
 }
 
 /**
- * Operation Log Panel.
+ * Operation Log Panel with show/hide toggle.
  */
 export function LogPanel({ logs, logEndRef, clearLogs }) {
+  const [visible, setVisible] = useState(true);
+
   return (
     <div style={S.logSection}>
       <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
       <div style={S.logTitle}>
-        <span>Operation Log</span>
-        <button style={S.clearBtn} onClick={clearLogs}>Clear</button>
+        <span style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+          Operation Log
+          <span
+            onClick={() => setVisible(!visible)}
+            style={{
+              cursor: 'pointer', fontSize: '11px', padding: '2px 8px',
+              borderRadius: '4px', userSelect: 'none',
+              background: visible ? '#2d3748' : '#4a5568',
+              color: visible ? '#a0aec0' : '#e2e8f0',
+              border: '1px solid #4a5568',
+            }}
+          >
+            {visible ? 'Hide' : 'Show'}
+          </span>
+        </span>
+        {visible && <button style={S.clearBtn} onClick={clearLogs}>Clear</button>}
       </div>
-      <div style={S.logBox}>
-        {logs.length === 0 && (
-          <div style={{ color: '#4a5568', fontStyle: 'italic' }}>No log entries yet.</div>
-        )}
-        {logs.map((entry, i) => (
-          <div key={i} style={S.logEntry(entry.type)}>
-            <span style={S.logTs}>[{entry.ts}]</span>
-            <span style={S.logType(entry.type)}>{entry.type.padEnd(6)}</span>
-            <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{entry.message}</span>
-          </div>
-        ))}
-        <div ref={logEndRef} />
-      </div>
+      {visible && (
+        <div style={S.logBox}>
+          {logs.length === 0 && (
+            <div style={{ color: '#4a5568', fontStyle: 'italic' }}>No log entries yet.</div>
+          )}
+          {logs.map((entry, i) => (
+            <div key={i} style={S.logEntry(entry.type)}>
+              <span style={S.logTs}>[{entry.ts}]</span>
+              <span style={S.logType(entry.type)}>{entry.type.padEnd(6)}</span>
+              <span style={{ whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}>{entry.message}</span>
+            </div>
+          ))}
+          <div ref={logEndRef} />
+        </div>
+      )}
     </div>
   );
 }
